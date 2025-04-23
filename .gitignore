@@ -1,0 +1,42 @@
+/build/
+*.bin
+*.elf
+*.map
+.idea/
+# CMake & Ninja generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+cmake-build-debug/
+
+# Python virtual environments
+venv/
+.env/
+*.pyc
+__pycache__/
+
+# Log and crash files
+*.log
+*.core
+
+# ESP-IDF configuration
+sdkconfig
+sdkconfig.old
+
+# VSCode settings (optional)
+.vscode/
+
+# IDF python deps (optional if you manage with system pip)
+.python_env/
+
+# Mac-specific files
+.DS_Store
+
+# Flash files
+*.flash.bin
+*.bootloader.bin
+*.partition-table.bin
+
+# Project description cmake files
+/project_description.json
