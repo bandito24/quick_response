@@ -118,9 +118,10 @@ esp_err_t rmt_custom_led_encoder(rmt_encoder_handle_t *led_encoder, led_strip_en
     *led_encoder = &led_strip->base;
     return state;
 }
-void custom_transmit_led_values(int delay, rmt_channel_handle_t tx_channel, rmt_encoder_handle_t encoder, const void *payload, size_t payload_bytes, const rmt_transmit_config_t *config)
+
+
+void custom_transmit_led_values(rmt_channel_handle_t tx_channel, rmt_encoder_handle_t encoder, const void *payload, size_t payload_bytes, const rmt_transmit_config_t *config)
 {
     ESP_ERROR_CHECK(rmt_transmit(tx_channel, encoder, payload, payload_bytes, config));
     ESP_ERROR_CHECK(rmt_tx_wait_all_done(tx_channel, portMAX_DELAY));
-    vTaskDelay(pdMS_TO_TICKS(delay));
 }

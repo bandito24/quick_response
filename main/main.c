@@ -9,9 +9,13 @@
 #include <string.h>
 #include "driver/rmt_tx.h"
 #include "driver/rmt_common.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include "led_encoder.h"
 #include <stdbool.h>
 #include "gameplay.h"
+#include "esp_system.h"
 
 #define RMT_LED_STRIP_RESOLUTION_HZ 10000000
 #define GPIO_LED GPIO_NUM_4
@@ -19,89 +23,163 @@
 #define LEDS 8
 
 static uint8_t led_strip_pixels[LEDS * 3];
-static char *TAG = "BUTTON";
-static bool forward = true;
+volatile bool button_click = false;
+const uint16_t starting_speed = 700;
 static led_bulb led_bulbs[LEDS];
+static int score = 0;
 
 void IRAM_ATTR my_button_isr_handler(void *arg)
 {
-   forward = !forward;
+    button_click = true;
 }
 
 void app_main(void)
 {
 
-   for (int i = 0; i < LEDS; i++)
-   {
-      led_bulb next_bulb = {
-          .GRB = {
-              &led_strip_pixels[i * 3 + 0],
-              &led_strip_pixels[i * 3 + 1],
-              &led_strip_pixels[i * 3 + 2]},
-          .update = update_values};
-      led_bulbs[i] = next_bulb;
-   }
+    for (int i = 0; i < LEDS; i++)
+    {
+        led_bulb next_bulb = {
+            .GRB = {
+                &led_strip_pixels[i * 3 + 0],
+                &led_strip_pixels[i * 3 + 1],
+                &led_strip_pixels[i * 3 + 2]},
+            .update = update_values};
+        led_bulbs[i] = next_bulb;
+    }
 
-   gpio_config_t btn_config = {
-       .pin_bit_mask = (1ULL << GPIO_BTN),
-       .mode = GPIO_MODE_DEF_INPUT,
-       .pull_up_en = GPIO_PULLUP_ENABLE,
-       .pull_down_en = GPIO_PULLDOWN_DISABLE,
-       .intr_type = GPIO_INTR_NEGEDGE};
-   ESP_ERROR_CHECK(gpio_config(&btn_config));
+    gpio_config_t btn_config = {
+        .pin_bit_mask = (1ULL << GPIO_BTN),
+        .mode = GPIO_MODE_DEF_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE};
+    ESP_ERROR_CHECK(gpio_config(&btn_config));
 
-   ESP_ERROR_CHECK(gpio_install_isr_service(0));
-   ESP_ERROR_CHECK(gpio_isr_handler_add(GPIO_BTN, my_button_isr_handler, NULL));
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(GPIO_BTN, my_button_isr_handler, NULL));
 
-   rmt_channel_handle_t led_chan;
-   rmt_tx_channel_config_t channel_config = {
-       .gpio_num = GPIO_LED,
-       .clk_src = RMT_CLK_SRC_DEFAULT,
-       .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
-       .mem_block_symbols = 64,
-       .trans_queue_depth = 4,
-       .flags.invert_out = false, // do not invert output signal
-       .flags.with_dma = false,
-   };
-   ESP_ERROR_CHECK(rmt_new_tx_channel(&channel_config, &led_chan));
+    rmt_channel_handle_t led_chan;
+    rmt_tx_channel_config_t channel_config = {
+        .gpio_num = GPIO_LED,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
+        .mem_block_symbols = 64,
+        .trans_queue_depth = 4,
+        .flags.invert_out = false, // do not invert output signal
+        .flags.with_dma = false,
+    };
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&channel_config, &led_chan));
 
-   rmt_encoder_handle_t led_encoder;
-   led_strip_encoder_config_t encoder_config = {
-       .resolution = RMT_LED_STRIP_RESOLUTION_HZ};
+    rmt_encoder_handle_t led_encoder;
+    led_strip_encoder_config_t encoder_config = {
+        .resolution = RMT_LED_STRIP_RESOLUTION_HZ};
 
-   ESP_ERROR_CHECK(rmt_custom_led_encoder(&led_encoder, &encoder_config));
+    ESP_ERROR_CHECK(rmt_custom_led_encoder(&led_encoder, &encoder_config));
 
-   ESP_ERROR_CHECK(rmt_enable(led_chan));
+    ESP_ERROR_CHECK(rmt_enable(led_chan));
 
-   rmt_transmit_config_t transmit_config = {
-       .loop_count = 0};
+    rmt_transmit_config_t transmit_config = {
+        .loop_count = 0};
 
-   ESP_ERROR_CHECK(rmt_encoder_reset(led_encoder));
+    ESP_ERROR_CHECK(rmt_encoder_reset(led_encoder));
 
-   led_iter_t iter = {.starting_value = 0};
+    led_configuration enc_values = {
+        .tx_channel = led_chan,
+        .encoder = led_encoder,
+        .payload_bytes = sizeof(led_strip_pixels),
+        .config = &transmit_config,
+        .led_bulbs = led_bulbs,
+        .led_bulb_count = LEDS};
 
-   while (1)
-   {
+    bool super_sayan = false;
 
-      bool current_val = forward;
-      iter.increment = forward ? 1 : -1;
+    const uint8_t *color_start = get_color_grb("green");
+    const uint8_t *color_end = get_color_grb("red");
+    const uint8_t *color_match = get_color_grb("blue");
 
-      for (int j = 0; j < LEDS; j += 1)
-      {
-         uint8_t i = iter.starting_value + (j * iter.increment);
-         i = i % LEDS;
-         led_bulbs[i].update(43, 138, 226, &led_bulbs[i]);
+    uint16_t speed = starting_speed;
+    while (1)
+    {
+        if (speed > 100)
+        {
+            speed = starting_speed - (score * 100);
+        }
+        else
+        {
+            speed = 50;
+            super_sayan = true;
+        }
 
-         custom_transmit_led_values(100, led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &transmit_config);
-         memset(led_strip_pixels, 0, sizeof(led_strip_pixels));
-         custom_transmit_led_values(100, led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &transmit_config);
+        uint8_t start = rand() % 8;
+        int8_t increment = start % 2 == 0 ? 1 : -1;
+        uint8_t finish = ((rand() % 5) + start + 2) % 8; // end index is next to it with a buffer of one
 
-         if (forward != current_val)
-         {
-            iter.starting_value = i;
-            ESP_LOGI(TAG, "direction changed");
-            break;
-         }
-      }
-   }
+        // starts as same color then moves
+        enc_values.led_bulbs[start].update(color_start, &enc_values.led_bulbs[start]);
+        enc_values.led_bulbs[finish].update(color_start, &enc_values.led_bulbs[finish]);
+        transmit_led_values(&enc_values, led_strip_pixels);
+        vTaskDelay(pdMS_TO_TICKS(700));
+
+        transmit_led_values(&enc_values, led_strip_pixels);
+
+        bool leds_match = false;
+
+        for (int i = 1; i < LEDS; i++)
+        {
+
+            uint8_t index = ((start + (i * increment)) % LEDS + LEDS) % LEDS;
+            if (index == finish)
+            {
+                leds_match = true;
+            }
+            else
+            {
+                leds_match = false;
+            }
+
+            enc_values.led_bulbs[index].update(color_start, &enc_values.led_bulbs[index]);
+
+            const uint8_t *result_color = leds_match ? color_match : color_end;
+
+            enc_values.led_bulbs[finish].update(result_color, &enc_values.led_bulbs[finish]);
+            transmit_led_values(&enc_values, led_strip_pixels);
+            vTaskDelay(pdMS_TO_TICKS(speed));
+
+            if (button_click)
+            {
+                button_click = false;
+                if (leds_match)
+                {
+                    score += 1;
+                    if (super_sayan)
+                    {
+                        display_super_sayan(score, &enc_values, led_strip_pixels);
+                    }
+                    else
+                    {
+                        display_win(score, &enc_values, led_strip_pixels);
+                    }
+                    ESP_LOGI("status", "you won!!! score is %d", score);
+                    goto start_over;
+                }
+                else
+                {
+                    break;
+                }
+
+                button_click = false;
+            }
+        }
+
+        // vTaskDelay(pdMS_TO_TICKS(1000));
+
+        speed = starting_speed;
+        score = 0;
+        super_sayan = false;
+        ESP_LOGI("status", "you lost :(");
+        display_loss(2, &enc_values, led_strip_pixels);
+
+    start_over:
+        continue;
+    }
 }
